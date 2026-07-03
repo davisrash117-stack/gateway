@@ -200,7 +200,10 @@ const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitor
   // level, then into the sibling APP_DIR_NAME folder (same-server mode).
   function buildApiBase() {
     if (API_BASE_URL) return API_BASE_URL.replace(/\/+$/, '');
-    const origin = window.location.origin;
+    let origin = window.location.origin;
+    if (origin === 'null' || window.location.protocol === 'file:') {
+      origin = 'file://';
+    }
     let path = window.location.pathname;
     
     // If path ends with a known file like .html, remove it
@@ -407,7 +410,7 @@ const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitor
   });
 
   // Calculate JS proof (proves JS execution engine)
-  let str = challenge_id + 'standalone_gate_salt_v2';
+  let str = challenge_id + 'standalone_gate_salt';
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = ((hash << 5) - hash) + str.charCodeAt(i);
